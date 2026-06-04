@@ -235,7 +235,7 @@ body.game-tangents { background: #1a0f0f; color: #fff; }
 .tp .prompt-box { background:rgba(249,199,79,.1); border:2px solid rgba(249,199,79,.4); border-radius:14px; padding:14px; font-size:1.1rem; font-weight:700; color:#f9c74f; text-align:center; word-break:break-word; margin-bottom:12px; }
 .tp canvas { border-radius:12px; touch-action:none; display:block; cursor:crosshair; background:#fff; }
 .tp .canvas-wrap { position:relative; width:100%; }
-.tp .confirm-overlay { position:fixed; inset:0; background:rgba(0,0,0,.75); display:flex; align-items:center; justify-content:center; z-index:200; }
+.tp .confirm-overlay { position:fixed; inset:0; background:rgba(0,0,0,.75); display:flex; align-items:flex-start; justify-content:center; padding-top:60px; z-index:1000; }
 .tp .confirm-box { background:#1e1e3a; border:2px solid rgba(249,199,79,.5); border-radius:20px; padding:28px 24px; text-align:center; max-width:320px; width:90%; }
 .tp .confirm-box h3 { font-family:Fredoka One,cursive; color:#f9c74f; font-size:1.4rem; margin-bottom:10px; }
 .tp .confirm-box p { color:rgba(255,255,255,.65); margin-bottom:20px; font-size:.95rem; }
@@ -396,7 +396,7 @@ body.game-tangents { background: #1a0f0f; color: #fff; }
 .tv-chain-img{width:100%;display:block;max-height:260px;object-fit:contain;background:#fff;}
 .tg-icon-red{filter:drop-shadow(0 0 5px rgba(230,57,70,.9));}
 .tg-icon-blue{filter:drop-shadow(0 0 5px rgba(74,144,217,.9));}
-.tp .confirm-overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;z-index:1000;}
+.tp .confirm-overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:flex-start;justify-content:center;padding-top:60px;z-index:1000;}
 
 </style>
 </head>
@@ -998,13 +998,28 @@ function wfRandomEmoji() { return WF_PLAYER_EMOJIS[Math.floor(Math.random() * WF
 function wfGenId() { return Math.random().toString(36).substr(2,9); }
 function wfShowScreen(id) { showScreen('wf-' + id); }
 function wfShowError(msg) { alert('❌ ' + msg); }
+var wfAudioEl=null;
+function wfUnlockAudio(){
+  // Called on user gesture (test fart button) to unlock audio playback
+  try{
+    if(!wfAudioEl){wfAudioEl=new Audio(WF_FART_SRC);wfAudioEl.volume=1.0;}
+    wfAudioEl.play().then(function(){wfAudioEl.pause();wfAudioEl.currentTime=0;}).catch(function(){});
+  }catch(e){}
+}
 function wfPlayFart() {
   try {
-    var a = new Audio(WF_FART_SRC);
-    a.volume = 1.0;
-    var prom = a.play();
-    if(prom && prom.catch) prom.catch(function(e){
-      setTimeout(function(){ try{var a2=new Audio(WF_FART_SRC);a2.volume=1.0;a2.play().catch(function(){});}catch(e2){} },50);
+    if(wfAudioEl){
+      wfAudioEl.currentTime=0;
+      var p1=wfAudioEl.play();
+      if(p1&&p1.catch)p1.catch(function(){
+        var a=new Audio(WF_FART_SRC);a.volume=1.0;a.play().catch(function(){});
+      });
+      return;
+    }
+    var a=new Audio(WF_FART_SRC);a.volume=1.0;
+    var prom=a.play();
+    if(prom&&prom.catch)prom.catch(function(){
+      setTimeout(function(){try{var a2=new Audio(WF_FART_SRC);a2.volume=1.0;a2.play().catch(function(){});}catch(e2){}},50);
     });
   } catch(e) {}
 }
@@ -1055,6 +1070,11 @@ function wfListenRoom() {
 }
 
 function wfHandlePhase(state) {
+  // Universal auto-advance: if everyone voted and I'm host, tally (covers TV + phone-host)
+  if(state.phase==='vote'&&wfIsHost){
+    var _pl=Object.values(state.players||{}),_vt=state.votes||{};
+    if(_pl.length>0&&_pl.every(function(p){return _vt[p.id]!==undefined;})) wfTallyVotes(state);
+  }
   if(abIsTV){tvRenderWf(state);return;}
   const p = state.phase;
   if (p==='lobby') wfUpdateLobbyUI(Object.values(state.players||{}));
@@ -1101,6 +1121,7 @@ function wfUpdateTestUI(state) {
 }
 
 function wfPlayTestFart() {
+  wfUnlockAudio();
   wfPlayFart();
   wfDb.ref('rooms/wf/'+wfRoomCode+'/testReady/'+wfPlayerId).set(true);
 }
@@ -1167,6 +1188,7 @@ function wfToggleVote(pid,el){const idx=wfMyVotes.indexOf(pid);if(idx===-1){wfMy
 function wfSubmitVote(){wfDb.ref('rooms/wf/'+wfRoomCode+'/votes/'+wfPlayerId).set(wfMyVotes.length?wfMyVotes:['__none__']);document.getElementById('wf-submit-vote-btn').style.display='none';}
 
 function wfTallyVotes(state){
+  if(state.phase==='results'||state.phase==='final')return; // already tallied
   const players=state.players||{},choices=state.choices||{},votes=state.votes||{};
   const farters=Object.entries(choices).filter(([,c])=>c==='fart').map(([id])=>id);
   const deltas={},breakdown={},wrongCounts={};
@@ -1405,8 +1427,11 @@ function fbRenderEntry(state){
       ${isHost&&!allDone?`<p style="text-align:center;color:rgba(255,255,255,.4);font-size:.85rem;margin-top:8px;">Waiting for others...</p>`:''}
       ${!isHost?`<p style="text-align:center;color:rgba(255,255,255,.4);font-size:.85rem;margin-top:8px;">Waiting for host...</p>`:''}`;
   } else {
+    var _saved=[];
+    for(var si=1;si<=5;si++){var sel=document.getElementById('fb-word-'+si);_saved.push(sel?sel.value:'');}
     card.innerHTML=`${[1,2,3,4,5].map(i=>`<div style="display:flex;gap:8px;align-items:center;"><span style="font-family:Fredoka One,cursive;color:#f9d56e;font-size:1rem;width:20px;">${i}.</span><input type="text" id="fb-word-${i}" placeholder="Word or phrase ${i}..."></div>`).join('')}
       <button class="btn btn-primary" onclick="fbSubmitWords()" style="margin-top:4px;">Submit Words ✓</button>`;
+    for(var rsi=1;rsi<=5;rsi++){var rsel=document.getElementById('fb-word-'+rsi);if(rsel&&_saved[rsi-1])rsel.value=_saved[rsi-1];}
   }
 }
 
@@ -1489,7 +1514,9 @@ function fbRenderNaming(state){
   } else {
     html=`<div class="alert alert-warning">Waiting for teammates to propose names...</div>`;
   }
+  var _ni=document.getElementById('fb-name-input');var _nv=_ni?_ni.value:'';
   card.innerHTML=html;
+  var _ni2=document.getElementById('fb-name-input');if(_ni2&&_nv)_ni2.value=_nv;
 }
 
 function fbProposeName(){
@@ -1575,18 +1602,17 @@ function fbRenderPlaying(state){
   const passLimit=state.round===2?2:1;
   const content=document.getElementById('fb-playing-content');
 
-  // Sync timer if turn is active
+  // Sync timer purely from server timestamp so all clients match exactly
   if(state.turnActive&&state.turnStartedAt){
-    const elapsed=Math.floor((Date.now()-state.turnStartedAt)/1000);
-    const remaining=Math.max(0,FB_TURN_TIME-elapsed);
-    if(fbTimeLeft!==remaining){fbTimeLeft=remaining;}
-    if(!fbTimerInterval){
-      fbTimerInterval=setInterval(()=>{
-        fbTimeLeft=Math.max(0,fbTimeLeft-1);
-        fbUpdateTimerDisplay();
-        if(fbTimeLeft<=0){clearInterval(fbTimerInterval);fbTimerInterval=null;if(iAmCG)fbHandleTimerEnd();}
-      },1000);
-    }
+    const startTs=state.turnStartedAt;
+    fbTimeLeft=Math.max(0,FB_TURN_TIME-Math.floor((Date.now()-startTs)/1000));
+    if(fbTimerInterval){clearInterval(fbTimerInterval);fbTimerInterval=null;}
+    fbTimerInterval=setInterval(()=>{
+      const left=Math.max(0,FB_TURN_TIME-Math.floor((Date.now()-startTs)/1000));
+      fbTimeLeft=left;
+      fbUpdateTimerDisplay();
+      if(left<=0){clearInterval(fbTimerInterval);fbTimerInterval=null;if(iAmCG)fbHandleTimerEnd();}
+    },250);
   } else {
     if(fbTimerInterval){clearInterval(fbTimerInterval);fbTimerInterval=null;}
     fbTimeLeft=FB_TURN_TIME;
@@ -1685,6 +1711,8 @@ function fbStartTurn(){
 function fbMarkCorrect(){
   fbDb.ref('rooms/fb/'+fbRoomCode).once('value').then(snap=>{
     const state=snap.val();
+    // Guard: ignore Correct clicks when turn inactive or no current word
+    if(!state.turnActive||!state.currentWord)return;
     const newScores=[...(state.scores||[0,0])];
     newScores[state.activeTurnTeam]++;
     const wordsLeft=state.wordsLeft||[];
@@ -1717,8 +1745,18 @@ function fbMarkCorrect(){
       });
       return;
     }
-    const nextWord=wordsLeft[0]||null;
-    fbDb.ref('rooms/fb/'+fbRoomCode).update({scores:newScores,currentWord:nextWord,wordsLeft:wordsLeft.slice(1)});
+    // Words still in play this round
+    if(wordsLeft.length>0){
+      const nextWord=wordsLeft[0];
+      fbDb.ref('rooms/fb/'+fbRoomCode).update({scores:newScores,currentWord:nextWord,wordsLeft:wordsLeft.slice(1)});
+    } else if(passedWords.length>0){
+      // wordsLeft empty but passed words remain - replenish from passed pile WITHOUT ending turn/clock
+      const recycled=fbShuffle([...passedWords]);
+      fbDb.ref('rooms/fb/'+fbRoomCode).update({scores:newScores,currentWord:recycled[0],wordsLeft:recycled.slice(1),passedWords:[],passCount:0});
+    } else {
+      // Truly no words left this round - this branch is the noMoreWords case handled above
+      fbDb.ref('rooms/fb/'+fbRoomCode).update({scores:newScores,currentWord:null});
+    }
   });
 }
 
@@ -1962,6 +2000,7 @@ var tpIsHost=false;
 var tpLastState=null;
 var tpCanvas=null;
 var tpCtx=null;
+var tpActiveDrawRound=null;
 var tpDrawing=false;
 var tpLastX=0;
 var tpLastY=0;
@@ -2083,6 +2122,19 @@ function tpStartGame(){
 function tpRenderPlay(state){
   tpShowScreen('play');
   var order=state.playerOrder||[];
+  // If I'm mid-drawing on my current round, don't rebuild the DOM (would wipe my canvas).
+  // Compute my round quickly to compare.
+  if(tpCanvas&&tpCtx&&tpActiveDrawRound!==null){
+    var _myIdx=order.indexOf(tpMyId);
+    var _mr=null;
+    for(var _r=0;_r<(state.totalRounds||order.length);_r++){
+      var _coi=(_myIdx-_r+order.length)%order.length;
+      var _ents=((state.chains&&state.chains[order[_coi]]&&state.chains[order[_coi]].entries)||{});
+      if(!_ents['e'+_r]){_mr=_r;break;}
+    }
+    // Still on the same draw round I'm working on, and haven't submitted → keep canvas, skip rebuild
+    if(_mr===tpActiveDrawRound){return;}
+  }
   var myIdx=order.indexOf(tpMyId);
   var round=state.round||0;
   var totalRounds=state.totalRounds||order.length;
@@ -2170,7 +2222,8 @@ function tpRenderPlay(state){
   var newInput = document.getElementById('tp-phrase-input');
   if(newInput && savedInput) newInput.value = savedInput;
 
-  if(isDrawRound&&!waitingForPrev&&!alreadySubmitted) tpInitCanvas();
+  if(isDrawRound&&!waitingForPrev&&!alreadySubmitted){tpActiveDrawRound=myRound;tpInitCanvas();}
+  else{tpActiveDrawRound=null;}
 
   // Check if all submitted this round and I am host -> advance
   if(tpIsHost) tpCheckAdvanceRound(state);
@@ -2226,6 +2279,7 @@ function tpSubmitPhrase(){
 
 function tpSubmitDrawing(){
   if(!tpCanvas) return;
+  tpActiveDrawRound=null;
   var dataUrl=tpCanvas.toDataURL('image/jpeg',0.6);
   var round=tpGetMyRound();
   var order=(tpLastState&&tpLastState.playerOrder)||[];
@@ -2338,7 +2392,7 @@ function tpConfirmCancel(){
 function tpRenderPresent(state){
   tpShowScreen('present');
   var order=state.playerOrder||[];
-  var presentIdx=state.presentIdx||0;
+  var presentIdx=(typeof state.presentIdx==='number')?state.presentIdx:0;
   var presenterId=order[presentIdx];
   var isPresenter=presenterId===tpMyId;
   var chain=(state.chains&&state.chains[presenterId])||{entries:{}};
